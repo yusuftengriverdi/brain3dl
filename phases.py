@@ -1,7 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from losses import DiceLoss, compute_dice_score
+
+try: 
+    from losses import DiceLoss, compute_dice_score
+except:
+    from .losses import DiceLoss, compute_dice_score
 from tqdm import tqdm
 
 def one_hot_mask(labels,  num_classes = 3):
