@@ -61,19 +61,19 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, scheduler
         # plt.subplot(244)
         # plt.imshow(X[4, 0])
         # plt.subplot(245)
-        # plt.imshow(X[5, 0])
+        # plt.imshow(y[1, 0])
         # plt.subplot(246)
-        # plt.imshow(X[6, 0])
+        # plt.imshow(y[2, 0])
         # plt.subplot(247)
-        # plt.imshow(X[7, 0])
+        # plt.imshow(y[3, 0])
         # plt.subplot(248)
-        # plt.imshow(X[8, 0])
+        # plt.imshow(y[4, 0])
         # plt.show()
 
         X, y = X.to(device), y.to(device)
 
         optimizer.zero_grad()
-        
+
         yhat = model(X)
         del X 
 

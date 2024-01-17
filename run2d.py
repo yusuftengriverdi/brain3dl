@@ -8,7 +8,7 @@ import torchvision.transforms as T
 if __name__ == '__main__':
 
     PATCH_SIZE = (128, 128)
-    BATCH_SIZE = 64
+    BATCH_SIZE = 8
     # Load Train Data
     image_size = (256, 256, 128)  # Replace with your actual image size
     lr_rate = 0.1
@@ -37,7 +37,7 @@ if __name__ == '__main__':
 
     volume_list = [11, 12, 13, 14, 17]  # Replace with your actual volume IDs
     fname_pattern = 'data/Validation_Set/IBSR_{0:02d}/IBSR_{0:02d}{1:}.nii.gz' # Replace with your actual file name pattern
-    volumes, labels, fnames = utils.load_data_2d_slices(volume_list, image_size, fname_pattern)
+    volumes, labels, fnames = utils.load_data_2d_slices(volume_list, image_size, fname_pattern, key='_denoised_v3')
     val_X, val_y, val_fnames, val_X_all_patches, val_y_all_patches, val_fnames_info = utils.extract_useful_patches(volumes, labels, patch_size=PATCH_SIZE, return_all=True, fnames=fnames)
 
     val_dataset = dataset.CustomDataset(val_X, val_y, transform=None, mask_transform=None)
