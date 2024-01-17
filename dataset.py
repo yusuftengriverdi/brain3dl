@@ -1,14 +1,15 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
+from utils import normalization_0_1
 
 class CustomDataset(Dataset):
-    def __init__(self, X, y, transform = None, mask_transform = None):
-        self.X = torch.Tensor(X)
-        self.y = torch.Tensor(y)
+    def __init__(self, X, y, transform = None, mask_transform = None, preprocessing = None):
+            # Add channel information.
+        self.X = torch.Tensor(X).unsqueeze(1)
+        self.y = torch.Tensor(y).unsqueeze(1)
 
         self.transform = transform
         self.mask_transform = mask_transform
-
     def __len__(self):
         return len(self.X)
 

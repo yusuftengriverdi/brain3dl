@@ -1,35 +1,30 @@
 import torch
 import torch.nn as nn
 
-# def conv3x3(in_channels, out_channels, **kwargs):
-#     '''Return a 1x1 convolutional layer with RetinaNet's weight and bias initialization'''
 
-#     layer = nn.Sequential(nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1),
-#                           nn.ReLU(),
-#                           nn.MaxPool3d(2, 2))
+def upsample(in_channels, out_channels, **kwargs):
+    '''Return a 3x3 transpose-convolutional layer'''
 
-#     return layer
-
-
-def upsample(scale_factor=2, **kwargs):
-    '''Return a 1x1 convolutional layer with RetinaNet's weight and bias initialization'''
-
-    layer = nn.Sequential(nn.Upsample(scale_factor=scale_factor, mode='trilinear', align_corners=True),
+    layer = nn.Sequential( 
+        nn.ConvTranspose3d(in_channels, out_channels, kernel_size=2, stride=2),
+                            nn.ReLU()
+        # nn.Upsample(scale_factor=scale_factor, mode='trilinear', align_corners=True),
                           )
 
     return layer
 
 
 def _conv3x3(in_channels, out_channels, **kwargs):
-                          
+    '''Return a 3x3 convolutional layer'''
+                
     layer = nn.Sequential(nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1),
                           nn.ReLU())
 
     return layer
 
-class SegNet(nn.Module):
+class SegNet3D(nn.Module):
     def __init__(self, n_classes, n_input_channels, scaling_factor, skip='cat'):
-        super(SegNet, self).__init__()
+        super(SegNet3D, self).__init__()
 
         self._skip = skip
         # Encoding path
@@ -46,17 +41,21 @@ class SegNet(nn.Module):
         self.relu_lat = nn.ReLU()
 
         # Decoding path
-        self.upsample = upsample()
+        self.up1 = upsample(256*scaling_factor, 128*scaling_factor)
 
-        self.conv4 = _conv3x3(256*scaling_factor + 128*scaling_factor, 128*scaling_factor)
+        self.conv4 = _conv3x3(256*scaling_factor, 128*scaling_factor)
 
-        self.conv5 = _conv3x3(128*scaling_factor + 64*scaling_factor, 64*scaling_factor)
+        self.up2 = upsample(128*scaling_factor, 64*scaling_factor)
 
-        self.conv6 = _conv3x3(64*scaling_factor + 32*scaling_factor, 32*scaling_factor)
+        self.conv5 = _conv3x3(128*scaling_factor, 64*scaling_factor)
+
+        self.up3 = upsample(64*scaling_factor, 32*scaling_factor)
+
+        self.conv6 = _conv3x3(64*scaling_factor, 32*scaling_factor)
 
         self.conv_out = nn.Conv3d(32*scaling_factor, n_classes, kernel_size=1)
 
-        self.activation = nn.Softmax(dim=3)
+
     def forward(self, x):
         # Encoding path
         x1 = self.conv1(x)
@@ -71,7 +70,7 @@ class SegNet(nn.Module):
         lat = self.relu_lat(self.lat(x3_))
 
         # Decoding path
-        up1 = self.upsample(lat)
+        up1 = self.up1(lat)
 
         if self._skip == 'cat':
             cat1 = torch.cat([up1, x3], dim=1)
@@ -80,7 +79,7 @@ class SegNet(nn.Module):
       
         x4 = self.conv4(cat1)
 
-        up2 = self.upsample(x4)
+        up2 = self.up2(x4)
 
         if self._skip == 'cat':
             cat2 = torch.cat([up2, x2], dim=1)
@@ -89,7 +88,7 @@ class SegNet(nn.Module):
       
         x5 = self.conv5(cat2)
 
-        up3 = self.upsample(x5)
+        up3 = self.up3(x5)
 
         if self._skip == 'cat':
             cat3 = torch.cat([up3, x1], dim=1)
@@ -101,4 +100,4 @@ class SegNet(nn.Module):
 
         x = self.conv_out(x6)
 
-        return self.activation(x)
+        return nn.functional.softmax(x, dim=1) 

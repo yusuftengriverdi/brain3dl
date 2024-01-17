@@ -9,7 +9,9 @@ import os
 import torch 
 from tqdm import tqdm 
 
-def load_data(volume_list, image_size, fname_pattern):
+import albumentations as album
+
+def load_data(volume_list, image_size, fname_pattern, key='_denoised_v2'):
     """
     Load MRI volumes and corresponding segmentation labels.
 
@@ -25,29 +27,92 @@ def load_data(volume_list, image_size, fname_pattern):
     volumes = np.zeros((n_volumes, *image_size), dtype=np.float32)
     labels = np.zeros((n_volumes, *image_size), dtype=np.float32)
     
+    voxel_spacing = []
     for iFile, iID in enumerate(volume_list):
-        img_data = sitk.ReadImage(fname_pattern.format(iID, '_denoised'))
+        img_data = sitk.ReadImage(fname_pattern.format(iID, key))
         volumes[iFile, ...] = np.transpose(sitk.GetArrayFromImage(img_data), (2, 0, 1))
 
         seg_data = sitk.ReadImage(fname_pattern.format(iID, '_seg'))
         labels[iFile, ...] = np.transpose(sitk.GetArrayFromImage(seg_data), (2, 0, 1))
 
+        voxel_spacing += [img_data.GetSpacing()]
+    
+    np.savetxt('voxel_spacing.txt', voxel_spacing)
+
     return (volumes, labels)
 
-def extract_useful_patches(volumes, labels, patch_size=(32, 32, 32), threshold=0.5):
+
+def load_data_2d_slices(volume_list, image_size, fname_pattern, key='_denoised_v2'):
+    """
+    Load MRI volumes and corresponding segmentation labels.
+
+    Args:
+        volume_list (list): List of volume IDs.
+        image_size (tuple): Size of the input volumes.
+        fname_pattern (str): File name pattern for loading volumes.
+
+    Returns:
+        tuple: A tuple containing volumes and labels arrays.
+    """
+    n_volumes = len(volume_list)
+    volumes = np.zeros((n_volumes, *image_size), dtype=np.float32)
+    labels = np.zeros((n_volumes, *image_size), dtype=np.float32)
+    fnames = np.zeros((n_volumes, image_size[-1]), dtype=np.float32) # save fnames along z-axis.
+    
+    voxel_spacing = []
+    for iFile, iID in enumerate(volume_list):
+        img_data = sitk.ReadImage(fname_pattern.format(iID, key))
+        volumes[iFile, ...] = np.transpose(sitk.GetArrayFromImage(img_data), (2, 0, 1))
+
+        seg_data = sitk.ReadImage(fname_pattern.format(iID, '_seg'))
+        labels[iFile, ...] = np.transpose(sitk.GetArrayFromImage(seg_data), (2, 0, 1))
+
+        fnames[iFile, :] = iID
+
+        voxel_spacing += [img_data.GetSpacing()]
+    
+    np.savetxt('voxel_spacing.txt', voxel_spacing)
+
+    volumes, labels, fnames = volumes.reshape(-1, volumes.shape[1], volumes.shape[2]), labels.reshape(-1, labels.shape[1], labels.shape[2]), fnames.flatten()
+    
+    return volumes, labels, fnames
+
+
+def extract_useful_patches(volumes, labels, patch_size=(32, 32, 32), threshold=0.5, return_all = False, fnames=None):
+    
+    if (not fnames is None) and len(patch_size) == 3:
+        raise ValueError("In 2D slices, please provide only H and W of patches.")
     
     X_patches = []
     y_patches = []
-    for X, y in zip(volumes, labels):
+    f_info_patches = []
+
+    Xs, ys, fs = [], [], []  
+
+    for idx, (X, y) in enumerate(zip(volumes, labels)):
         #This will split the image into small images of shape [3,3,3]
         # patches = patchify(image, (3, 3, 3), step=1)
-        X = patchify(X, (patch_size), step=patch_size[0] ).reshape((-1, patch_size[0], patch_size[1], patch_size[2]))
-        y = patchify(y, (patch_size), step=patch_size[0] ).reshape((-1, patch_size[0], patch_size[1], patch_size[2]))
+
+        if (not fnames is None):
+            f = fnames[idx]
+
+        X = patchify(X, (patch_size), step=patch_size[0] ).reshape((-1, *patch_size))
+        y = patchify(y, (patch_size), step=patch_size[0] ).reshape((-1, *patch_size))
+
+        if return_all:
+            Xs.append(X)
+            ys.append(y)
+            if (not fnames is None):
+                fs.append(f)
 
         # Check if m_patch contains values other than 0
         foreground = y != 0
 
-        useful_patches = foreground.sum(axis=(1, 2, 3)) / len(foreground[0]) > threshold
+        if (fnames is None):
+            useful_patches = foreground.sum(axis=(1, 2, 3)) / len(foreground[0]) > threshold
+        else:
+            useful_patches = foreground.sum(axis=(1, 2)) / len(foreground[0]) > threshold
+            f_info_patches.append([f for i in useful_patches])
 
         X_patches.append(X[useful_patches])
         y_patches.append(y[useful_patches])
@@ -66,8 +131,13 @@ def extract_useful_patches(volumes, labels, patch_size=(32, 32, 32), threshold=0
     
     print("Number of useful patches found: ", X_patches_flatten.shape[0])
     print("Number of volumes:", len(volumes))
+    print("Number of fnames:", len(f_info_patches))
 
-    return X_patches_flatten, y_patches_flatten
+    if return_all:
+        return X_patches_flatten, y_patches_flatten, f_info_patches, Xs, ys, fs
+
+    return X_patches_flatten, y_patches_flatten, f_info_patches
+
 
 def visualize_patches(X_patches, y_patches, rows, cols):
     fig, axes = plt.subplots(rows, cols, figsize=(cols*2, rows*2))
@@ -88,48 +158,24 @@ def visualize_patches(X_patches, y_patches, rows, cols):
     plt.tight_layout()
     plt.show()
 
-def calculate_mean_std(data, cache_file="mean_std_cache.pth"):
-    if os.path.exists(cache_file):
-        # Load cached mean and std from file
-        mean_std_dict = torch.load(cache_file)
-        mean = mean_std_dict["mean"]
-        std = mean_std_dict["std"]
-    else:
-        # Calculate mean and std
-        means = []
-        stds = []
-        pbar = tqdm(data, total=len(data), desc="Calculating mean and std")
-        for img in pbar:
-            means.append(np.mean(img))
-            stds.append(np.std(img))
 
-        mean = np.mean(means)
-        std = np.mean(stds)
+def main():
+    # Example usage
+    volume_list = [1, 3, 4, 5, 6, 7, 8, 9, 16, 18]  # Replace with your actual volume IDs
+    image_size = (256, 256, 128)  # Replace with your actual image size
+    fname_pattern = 'data/Training_Set/IBSR_{0:02d}/IBSR_{0:02d}{1:}.nii.gz' # Replace with your actual file name pattern
 
-        # Save mean and std to cache file
-        mean_std_dict = {"mean": mean, "std": std}
-        torch.save(mean_std_dict, cache_file)
+    volumes, labels = load_data(volume_list, image_size, fname_pattern)
 
-    print(mean, std)
-    return mean, std
-
-# def main():
-#     # Example usage
-#     volume_list = [1, 3, 4, 5, 6, 7, 8, 9, 16, 18]  # Replace with your actual volume IDs
-#     image_size = (256, 256, 128)  # Replace with your actual image size
-#     fname_pattern = 'data/Training_Set/IBSR_{0:02d}/IBSR_{0:02d}{1:}.nii.gz' # Replace with your actual file name pattern
-
-#     volumes, labels = load_data(volume_list, image_size, fname_pattern)
-
-#     vol_patches, seg_patches = extract_useful_patches(volumes, labels)
+    vol_patches, seg_patches, _ = extract_useful_patches(volumes, labels)
 
 
-#     # Print some information
-#     print("Number of volumes:", len(volume_list))
-#     print("Number of useful patches:", len(vol_patches))
+    # Print some information
+    print("Number of volumes:", len(volume_list))
+    print("Number of useful patches:", len(vol_patches))
 
-#     visualize_patches(vol_patches, seg_patches, rows=5, cols=5)
+    visualize_patches(vol_patches, seg_patches, rows=5, cols=5)
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
