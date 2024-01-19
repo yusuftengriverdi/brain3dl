@@ -41,6 +41,29 @@ def load_data(volume_list, image_size, fname_pattern, key='_denoised_v2'):
 
     return (volumes, labels)
 
+def load_data_test(volume_list, image_size, fname_pattern, key='_denoised_v2'):
+    """
+    Load MRI volumes and corresponding segmentation labels.
+
+    Args:
+        volume_list (list): List of volume IDs.
+        image_size (tuple): Size of the input volumes.
+        fname_pattern (str): File name pattern for loading volumes.
+
+    Returns:
+        tuple: A tuple containing volumes and labels arrays.
+    """
+    n_volumes = len(volume_list)
+    volumes = np.zeros((n_volumes, *image_size), dtype=np.float32)
+    
+    for iFile, iID in enumerate(volume_list):
+        img_data = sitk.ReadImage(fname_pattern.format(iID, key))
+        volumes[iFile, ...] = np.transpose(sitk.GetArrayFromImage(img_data), (2, 0, 1))
+
+    volumes = volumes.reshape(-1, volumes.shape[1], volumes.shape[2])
+
+    return volumes
+
 
 def load_data_2d_slices(volume_list, image_size, fname_pattern, key='_denoised_v2'):
     """

@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
+import segmentation_models_pytorch as smp
+from dataset import min_max_normalization_tensor
 try: 
     from losses import *
 except:
@@ -9,6 +10,17 @@ except:
 from tqdm import tqdm
 import datetime
 from metrics import haussdorf, rel_abs_vol_dif
+import os, logging
+
+def setup_logging(date):
+    log_folder = 'runs/'
+    os.makedirs(log_folder, exist_ok=True)
+    
+    log_filename = os.path.join(log_folder, f'log_{date}.txt')
+    
+    logging.basicConfig(filename=log_filename, level=logging.INFO)
+    logging.getLogger().addHandler(logging.StreamHandler())  # Print logs to console as well
+
 
 def one_hot_mask(labels,  num_classes = 3):
 
@@ -44,13 +56,16 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, scheduler
 
     for batch, item in pbar:
         # for 3d
-        # X = item['volume'].unsqueeze(1)
-        # y = item['label'].unsqueeze(1)
-        X = item['volume']
-        y = item['label']
+        # X = item['image'].unsqueeze(1)
+        # y = item['mask'].unsqueeze(1)
+        X = item['image']
+        y = item['mask']
+        if len(y.shape) != 4:
+            y = y.unsqueeze(1)
     
         del item
 
+        # print(X.shape, y.shape)
         # import matplotlib.pyplot as plt
         # plt.subplot(241)
         # plt.imshow(X[1, 0])
@@ -118,8 +133,10 @@ def validate(model, val_loader, criterion, device):
 
         for batch, item in pbar:
             
-            X = item['volume']
-            y = item['label']
+            X = item['image']
+            y = item['mask']
+            if len(y.shape) != 4:
+                y = y.unsqueeze(1)
             del item 
 
             X, y = X.to(device), y.to(device)
@@ -153,38 +170,51 @@ def validate(model, val_loader, criterion, device):
     return running_loss, running_dice, running_ravd, running_hd
 
 
-def train_and_validate(model, train_loader, val_loader, num_epochs, learning_rate=0.01, device='cuda'):
+def train_and_validate(model, train_loader, val_loader, num_epochs, learning_rate=0.01, device='cuda', date=None):
+    
+    setup_logging(date=date)
+
     model.to(device)
 
-    date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     criterion = SoftDiceLoss()
-    #criterion = nn.MSELoss(reduction='mean') # Dice increasing 0.40 ep2 0.01 adam , loss is kinda stable??? 
-    # criterion = nn.CrossEntropyLoss()
-    # optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    optimizer = optim.SGD(model.parameters(), lr=learning_rate)
+    # criterion = nn.MSELoss(reduction='mean')
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+    # scheduler = optim.lr_scheduler.CyclicLR(optimizer=optimizer, 
+    #                                         base_lr=learning_rate / 100,
+    #                                         max_lr=learning_rate,
+    #                                         step_size_up=100, 
+    #                                         step_size_down=100)
+
+    scheduler = None
     
-    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.1)
+    logging.info(criterion)
+    logging.info(optimizer)
+    logging.info(scheduler)
 
     best_val_dice = -0.0
 
     for epoch in range(1, num_epochs + 1):
-        print(f"\nEpoch {epoch}/{num_epochs}")
+        logging.info(f"\nEpoch {epoch}/{num_epochs}")
 
         # Training
-        train_loss, train_dice, train_ravd, train_hd = train_one_epoch(model, train_loader, criterion, optimizer, device, scheduler=None)
-        print(f"Training Loss: {train_loss:.4f}")
+        train_loss, train_dice, train_ravd, train_hd = train_one_epoch(model, train_loader, criterion, optimizer, device, scheduler=scheduler)
+        logging.info(f"Training Loss: {train_loss:.4f}, Training Dice: {train_dice:.4f}")
 
         # Validation
         val_loss, val_dice, val_ravd, val_hd = validate(model, val_loader, criterion, device)
-        print(f"Validation Loss: {val_loss:.4f}")
+        logging.info(f"Validation Loss: {val_loss:.4f}, Validation Dice: {val_dice:.4f}")
 
         if val_dice > best_val_dice:
             best_val_dice = val_dice
+            logging.info(f"Best Val Dice so far: {best_val_dice}")
             torch.save(model, f'runs/best_model_val_dice_{date}.pth')
 
+    logging.info("\nTraining complete!")
 
-    print("\nTraining complete!")
+
+
 
 # Example usage:
 # Assuming you have train_loader, val_loader, and model ready
